@@ -1,0 +1,73 @@
+name: Build Windows Installer (EXE)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build_windows_installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          architecture: x64
+
+      - name: Enable Windows Desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Generate Windows Runner & Ensure Fonts
+        shell: pwsh
+        run: |
+          Copy-Item lib/main.dart main.dart.bak
+          Copy-Item pubspec.yaml pubspec.yaml.bak
+          flutter create --platforms=windows --project-name=music_player .
+          Move-Item -Force main.dart.bak lib/main.dart
+          Move-Item -Force pubspec.yaml.bak pubspec.yaml
+
+          if (-not (Test-Path "assets/fonts")) {
+            New-Item -ItemType Directory -Force -Path "assets/fonts" | Out-Null
+          }
+          if (-not (Test-Path "assets/fonts/YekanBakhFaNum-Regular.ttf")) {
+            Invoke-WebRequest -Uri "https://github.com/rastikerdar/vazirmatn/raw/master/fonts/ttf/Vazirmatn-Regular.ttf" -OutFile "assets/fonts/YekanBakhFaNum-Regular.ttf"
+          }
+          if (-not (Test-Path "assets/fonts/YekanBakhFaNum-Bold.ttf")) {
+            Invoke-WebRequest -Uri "https://github.com/rastikerdar/vazirmatn/raw/master/fonts/ttf/Vazirmatn-Bold.ttf" -OutFile "assets/fonts/YekanBakhFaNum-Bold.ttf"
+          }
+
+      - name: Set Windows Window Size (500x920)
+        shell: pwsh
+        run: |
+          $winMain = "windows/runner/main.cpp"
+          if (Test-Path $winMain) {
+            (Get-Content $winMain) -replace 'size\(1280, 720\)', 'size(500, 920)' | Set-Content $winMain
+          }
+
+      - name: Install Flutter Dependencies
+        run: flutter pub get
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Compile Full Windows Installer with Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y
+          }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Upload Windows Installer (MusicPlayer_Setup.exe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusicPlayer-Windows-Installer
+          path: Output/MusicPlayer_Setup.exe
